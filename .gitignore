@@ -1,0 +1,7 @@
+# OS / editor cruft
+.DS_Store
+*.swp
+*~
+
+# Local runtime state created by skills (never commit)
+.cache/

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "agent-skills",
+  "description": "just2d's collection of Claude Code Agent Skills, distributed as installable plugins.",
+  "owner": {
+    "name": "just2d"
+  },
+  "plugins": [
+    {
+      "name": "codex-review",
+      "description": "Get an independent code review from the local Codex CLI. Session-bound by default so one Codex conversation persists across review rounds; a --standalone mode handles one-off reviews.",
+      "category": "development",
+      "source": "./plugins/codex-review",
+      "homepage": "https://github.com/just2d/agent-skills/tree/main/plugins/codex-review"
+    }
+  ]
+}

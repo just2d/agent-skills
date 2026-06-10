@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "codex-review",
+  "description": "Get an independent code review from the local Codex CLI. Session-bound by default so one Codex conversation persists across review rounds (no re-sending project background, no reloading the codebase each round); a --standalone mode handles one-off reviews.",
+  "version": "0.1.0",
+  "author": {
+    "name": "just2d"
+  },
+  "homepage": "https://github.com/just2d/agent-skills/tree/main/plugins/codex-review",
+  "keywords": [
+    "code-review",
+    "codex",
+    "second-opinion"
+  ]
+}
