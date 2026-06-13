@@ -5,3 +5,7 @@
 
 # Local runtime state created by skills (never commit)
 .cache/
+
+# Python bytecode (from stdlib-Python skills like browser-cdp)
+__pycache__/
+*.pyc

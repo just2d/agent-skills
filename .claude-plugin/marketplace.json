@@ -12,6 +12,13 @@
       "category": "development",
       "source": "./plugins/codex-review",
       "homepage": "https://github.com/just2d/agent-skills/tree/main/plugins/codex-review"
+    },
+    {
+      "name": "browser-cdp",
+      "description": "Inspect and control an already-running Chrome/Chromium browser over the Chrome DevTools Protocol on localhost:9222 — read tabs, extract text/HTML, screenshot, run JS, click/fill forms, open/navigate tabs — without stealing focus or changing the active tab. Pure-stdlib Python CLI, no dependencies.",
+      "category": "automation",
+      "source": "./plugins/browser-cdp",
+      "homepage": "https://github.com/just2d/agent-skills/tree/main/plugins/browser-cdp"
     }
   ]
 }
