@@ -234,7 +234,11 @@ class _WS:
             path += "?" + u.query
         self._sock = socket.create_connection((host, port), timeout=timeout)
         self._buf = b""
-        self._handshake(host, port, path)
+        try:
+            self._handshake(host, port, path)
+        except Exception:
+            self._sock.close()
+            raise
 
     def _handshake(self, host, port, path):
         key = base64.b64encode(os.urandom(16)).decode()
@@ -360,9 +364,15 @@ def find_tab(query, port, host):
     for t in tabs:
         if t.get("id") == query:
             return t
-    for t in tabs:
-        if t.get("id", "").startswith(query) and len(query) >= 6:
-            return t
+    if len(query) >= 6:
+        id_matches = [t for t in tabs if t.get("id", "").startswith(query)]
+        if len(id_matches) == 1:
+            return id_matches[0]
+        if len(id_matches) > 1:
+            sys.stderr.write(f"Multiple tabs match id prefix {query!r}:\n")
+            for m in id_matches:
+                sys.stderr.write(f"  {m.get('id','')}  {m.get('title','')[:60]}\n")
+            sys.exit(2)
 
     ql = query.lower()
     matches = [
@@ -380,10 +390,20 @@ def find_tab(query, port, host):
     return None
 
 
+def _ws_timeout():
+    raw = os.environ.get("CDP_WS_TIMEOUT", "10")
+    try:
+        value = float(raw)
+    except ValueError:
+        sys.exit(f"invalid CDP_WS_TIMEOUT={raw!r}: must be a number of seconds")
+    if value <= 0:
+        sys.exit(f"invalid CDP_WS_TIMEOUT={raw!r}: must be > 0")
+    return value
+
+
 class CDPSession:
     def __init__(self, ws_url):
-        timeout = float(os.environ.get("CDP_WS_TIMEOUT", "10"))
-        self.ws = _WS(ws_url, timeout=timeout)
+        self.ws = _WS(ws_url, timeout=_ws_timeout())
         self._id = 0
 
     def send(self, method, params=None):
@@ -444,7 +464,7 @@ def _eval_result(cdp, expr, *, return_by_value=True, await_promise=True, object_
     result = cdp.send("Runtime.evaluate", params)
     message = _js_exception_message(result)
     if message:
-        sys.exit(f"JS error: {message}")
+        raise RuntimeError(f"JS error: {message}")
     return result
 
 
@@ -560,10 +580,6 @@ def _type_selector(cdp, selector, text):
 
 
 def _wait_selector(cdp, selector, *, gone=False, timeout=10.0, poll=0.2):
-    if timeout < 0:
-        raise ValueError("--timeout must be >= 0")
-    if poll <= 0:
-        raise ValueError("--poll must be > 0")
     selector_json = json.dumps(selector)
     expr = (
         "(()=>{"
@@ -575,6 +591,10 @@ def _wait_selector(cdp, selector, *, gone=False, timeout=10.0, poll=0.2):
 
 
 def _wait_eval(cdp, expr, *, want_present=True, timeout=10.0, poll=0.2):
+    if timeout < 0:
+        raise ValueError("--timeout must be >= 0")
+    if poll <= 0:
+        raise ValueError("--poll must be > 0")
     deadline = time.monotonic() + timeout
     last_error = None
     while True:
@@ -1380,6 +1400,8 @@ def main():
         )
     except RuntimeError as e:
         sys.exit(f"CDP error: {e}")
+    except ValueError as e:
+        sys.exit(f"invalid argument: {e}")
     except (TimeoutError, socket.timeout) as e:
         sys.exit(
             f"Timed out talking to the tab ({e}). It may be backgrounded and "
