@@ -9,6 +9,7 @@ Each skill lives in its own plugin under [`plugins/`](./plugins), so you can ins
 | Plugin | What it does |
 | --- | --- |
 | [`codex-review`](./plugins/codex-review) | Run the local **Codex CLI** as an independent code reviewer. Session-bound by default so one Codex conversation persists across review rounds; a `--standalone` mode handles one-off reviews. |
+| [`browser-cdp`](./plugins/browser-cdp) | Drive an already-running **Chrome/Chromium** browser over the **Chrome DevTools Protocol** (`localhost:9222`) — read tabs, extract text/HTML, screenshot, run JS, click/fill forms — **without stealing focus** or changing the active tab. Pure-stdlib Python CLI. |
 
 ## Install (recommended: plugin marketplace)
 
@@ -17,6 +18,7 @@ In Claude Code, add this repo as a marketplace once, then install the plugins yo
 ```
 /plugin marketplace add just2d/agent-skills
 /plugin install codex-review@agent-skills
+/plugin install browser-cdp@agent-skills
 ```
 
 Update later with:
