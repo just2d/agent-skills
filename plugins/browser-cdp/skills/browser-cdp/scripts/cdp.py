@@ -18,6 +18,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import os
 import re
 import socket
@@ -396,8 +397,8 @@ def _ws_timeout():
         value = float(raw)
     except ValueError:
         sys.exit(f"invalid CDP_WS_TIMEOUT={raw!r}: must be a number of seconds")
-    if value <= 0:
-        sys.exit(f"invalid CDP_WS_TIMEOUT={raw!r}: must be > 0")
+    if not math.isfinite(value) or value <= 0:
+        sys.exit(f"invalid CDP_WS_TIMEOUT={raw!r}: must be a positive, finite number of seconds")
     return value
 
 
@@ -591,10 +592,10 @@ def _wait_selector(cdp, selector, *, gone=False, timeout=10.0, poll=0.2):
 
 
 def _wait_eval(cdp, expr, *, want_present=True, timeout=10.0, poll=0.2):
-    if timeout < 0:
-        raise ValueError("--timeout must be >= 0")
-    if poll <= 0:
-        raise ValueError("--poll must be > 0")
+    if not math.isfinite(timeout) or timeout < 0:
+        raise ValueError("--timeout must be a finite number >= 0")
+    if not math.isfinite(poll) or poll <= 0:
+        raise ValueError("--poll must be a finite number > 0")
     deadline = time.monotonic() + timeout
     last_error = None
     while True:
