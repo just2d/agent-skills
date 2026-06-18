@@ -1,6 +1,6 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "agent-skills",
+  "name": "just2d-skills",
   "description": "just2d's collection of Claude Code Agent Skills, distributed as installable plugins.",
   "owner": {
     "name": "just2d"
