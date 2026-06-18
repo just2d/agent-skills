@@ -44,6 +44,32 @@ bash ~/.claude/skills/codex-review/review.sh --base main
 bash ~/.claude/skills/codex-review/review.sh --standalone "review this skill for portability bugs"
 ```
 
+## Async execution — launch in the background, then wait (do NOT poll)
+
+This is a slow call: Codex typically takes a few minutes. The script runs Codex
+silently — it buffers the whole Codex session into temp files and prints the
+result (the `[codex-review]` … header + findings + **Verdict: GO/NO-GO**) only
+once, at the very end. There is no streaming or incremental output.
+
+Follow this exactly; do not improvise a peek-and-poll loop:
+
+1. Launch it in the background, then wait. In Claude Code, run with
+   `run_in_background: true`; in a plain shell, background it (`… &` then `wait`).
+   The completion signal (the background-task notification, or `wait` returning) is
+   your cue to read the result.
+2. **An empty output file mid-run is NORMAL — it means "still running", not an
+   error and not a hang.** Don't read it early, don't poll it on a timer, don't
+   infer failure from its emptiness, don't go checking whether the process is alive.
+3. Errors surface on completion, not mid-run. Preflight failures (no codex on
+   PATH/`CODEX_BIN`, a bad `--base`) exit within seconds with a `[codex-review]
+   ERROR: …` line. Failures inside the Codex run itself (e.g. not authenticated)
+   come back as a non-zero exit with a stderr tail (`… produced no final message …
+   Raw tail:`) instead. Either way you see it when the task completes — so there's
+   still no need for an early "did it crash?" peek.
+4. On completion, read the output file once, then relay the verdict + findings.
+   Exit 0 = a final review was produced; non-zero = the script prints a stderr tail
+   explaining why.
+
 ## Picking the mode
 
 If the thing being reviewed is part of the work you're doing in **this** Claude
