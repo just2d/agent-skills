@@ -19,6 +19,13 @@
       "category": "automation",
       "source": "./plugins/browser-cdp",
       "homepage": "https://github.com/just2d/agent-skills/tree/main/plugins/browser-cdp"
+    },
+    {
+      "name": "multi-llm-research-coordinator",
+      "description": "Fan ONE question out to the user's logged-in Gemini + GPT + Claude tabs in parallel over local Chrome (paid subscriptions, no API), then synthesize. Agent-driven end to end. Two modes: RESEARCH/选型 (convergent, structured) and DISCUSSION/多视角 (divergent — role-decorrelated takes + consensus/dissent synthesis). Pure-stdlib Python, no dependencies.",
+      "category": "automation",
+      "source": "./plugins/multi-llm-research-coordinator",
+      "homepage": "https://github.com/just2d/agent-skills/tree/main/plugins/multi-llm-research-coordinator"
     }
   ]
 }
