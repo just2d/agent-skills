@@ -58,6 +58,20 @@ for the full agent run protocol, prerequisites, output layout, and known limits.
 - **ToS / account risk** — automating logged-in web chats is each vendor's gray area; risk is yours.
 - **Per-user logins** — no shared backend; each user needs their own Chrome + three logins.
 
-> Development source (lib + design docs `00–08`, tests, real-machine sanity) lives in the
-> `just2d/multi-llm-coordinator-design`, `just2d/multi-llm-lib`, and `just2d/multi-llm-research-coordinator`
-> repos. This plugin is the packaged, self-contained distribution.
+## Maintaining
+
+This plugin is the **single home** of the skill (the old standalone
+`just2d/multi-llm-research-coordinator` repo is archived/read-only). Edit the skill
+here. The driver library is **vendored** under `skills/.../scripts/lib/` and
+SHA-pinned in its `.synced_sha`. After `multi-llm-lib` changes, re-vendor it:
+
+```bash
+./sync-lib.sh            # re-pin the current SHA (idempotent)
+./sync-lib.sh <git-sha>  # bump to a new multi-llm-lib SHA
+```
+
+then `python3 -m py_compile skills/*/scripts/*.py` and commit + push.
+
+> Dev source for the **library and design** stays in `just2d/multi-llm-lib`
+> (driver/CDP lib) and `just2d/multi-llm-coordinator-design` (design docs `00–08`,
+> handoff, real-machine sanity). This plugin is the packaged, self-contained distribution.
