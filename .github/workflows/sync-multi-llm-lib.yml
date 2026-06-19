@@ -1,0 +1,83 @@
+name: sync-multi-llm-lib
+
+# Auto re-vendor the multi-llm-lib driver library into the
+# multi-llm-research-coordinator plugin and open a PR when it drifts.
+#
+# Why a PR and not a direct push: the lib's real-machine driver sanity
+# (driver_roundtrip_sanity.py) needs a logged-in Chrome and CANNOT run in CI.
+# The PR is the gate — a human merges only after that sanity passes locally.
+#
+# REQUIRED SECRET (one-time, you must add it — CI can't read another private repo
+# with the default token):
+#   LIB_SYNC_TOKEN = a GitHub PAT (fine-grained) with READ access to
+#                    just2d/multi-llm-lib (Contents: read).
+#   Add it with:  gh secret set LIB_SYNC_TOKEN --repo just2d/agent-skills
+#
+# Optional INSTANT trigger (instead of waiting for the daily schedule): add a
+# workflow in multi-llm-lib that fires `repository_dispatch` of type
+# `multi-llm-lib-updated` to this repo on push to main (needs its own PAT there).
+
+on:
+  schedule:
+    - cron: "17 9 * * *"        # daily drift check
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "multi-llm-lib ref to vendor (default: main)"
+        default: "main"
+  repository_dispatch:
+    types: [multi-llm-lib-updated]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Re-vendor multi-llm-lib + compile
+        env:
+          LIB_SYNC_TOKEN: ${{ secrets.LIB_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${LIB_SYNC_TOKEN}" ]; then
+            echo "::error::LIB_SYNC_TOKEN secret is missing — add a PAT with read access to just2d/multi-llm-lib"
+            exit 1
+          fi
+          # inject the token so sync-lib.sh's https clone of the private lib works
+          git config --global url."https://x-access-token:${LIB_SYNC_TOKEN}@github.com/".insteadOf "https://github.com/"
+          REF="${{ github.event.inputs.ref || 'main' }}"
+          plugins/multi-llm-research-coordinator/sync-lib.sh "$REF"
+          python3 -m py_compile plugins/multi-llm-research-coordinator/skills/*/scripts/*.py
+          find plugins -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null || true
+
+      - name: Open PR if the vendored lib drifted
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "vendored lib already up to date — nothing to do."
+            exit 0
+          fi
+          SHA=$(cat plugins/multi-llm-research-coordinator/skills/*/scripts/lib/.synced_sha)
+          SHORT=${SHA:0:7}
+          BRANCH="auto/bump-lib-${SHORT}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "chore: re-vendor multi-llm-lib @ ${SHORT} into multi-llm-research-coordinator"
+          git push -u origin "$BRANCH" --force
+          gh pr create \
+            --base main --head "$BRANCH" \
+            --title "chore: bump vendored multi-llm-lib to ${SHORT}" \
+            --body "Auto re-vendored by \`sync-multi-llm-lib\`. **Merge only after the real-machine driver sanity (\`driver_roundtrip_sanity.py\`) passes locally** — CI can't run it (needs a logged-in Chrome). Pinned SHA: \`${SHA}\`." \
+            || echo "PR may already exist for ${BRANCH}; branch pushed."
