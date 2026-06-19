@@ -226,11 +226,15 @@ def build_drafter_prompt(outputs: dict) -> str:
     joined = "\n\n".join(blocks)
     return (
         "你是汇总者(drafter)。下面是三个 AI 针对同一调研问题各自独立给出的方案。"
-        "请合成一份给用户一次看完的结论，**用 Markdown，强制四段**：\n"
-        "## 1. 三家共识结论\n## 2. 高价值少数派意见（只1家提但有道理的）\n"
-        "## 3. 未消解分歧（三家明显不同取舍的）\n"
-        "## 4. 给我的推荐（紧扣【原始问题】里写明的约束与场景，不要泛泛而谈）\n"
-        "（某段没有内容就写“无”，不要省略段落。）\n\n"
+        "**重要:你(GPT)自己也是其中一个来源——合成时绝不得偏袒你自己的方案;按跨来源一致性加权,多家印证 > 单家主张。**"
+        "请合成一份给用户一次看完的结论,**用干净的 Markdown(段落正常换行;列表项之间不要插空行、不要把加粗单独成行)**,"
+        "**强制下列五节**:\n"
+        "## 1. 三家共识结论（多家一致的优先,标明是被交叉印证的）\n"
+        "## 2. 高价值少数派意见（只1家提但有道理的）——**逐条标注是哪家提的;单一来源的主张必须显式下调可信度、注明『仅X家提』,不得因为是你自己提的就抬高排序**\n"
+        "## 3. 未消解分歧（各家明显不同取舍 / 互相矛盾的）——有冲突就直说,不要抹平\n"
+        "## 4. 给我的推荐（紧扣【原始问题】的约束与场景,不泛泛;排序须体现来源一致性,单源方案不得排在多源方案之前,除非给出强理由）\n"
+        "## 5. ⚠ 待核事实（needs verification）——把**结论所依赖、但各家给的值互相冲突、或仅单一来源**的承重事实/版本号/日期/能力声明逐条列出,注明冲突点。这些**交给协调者去核**,不得当成定论写进推荐\n"
+        "（某节没有内容就写『无』,不要省略。）\n\n"
         f"【原始问题】\n{QUESTION}\n\n{joined}"
     )
 
@@ -238,6 +242,14 @@ def build_drafter_prompt(outputs: dict) -> str:
 def measure_oq(results, outputs, draft) -> str:
     lines = [f"# OQ findings — {TOPIC_ID}", "", f"_generated {_now_iso()}_",
              f"_render strategy: parallel dispatch + serial extract (focus-emulation only, no foregrounding); budget {RESEARCH_BUDGET_S}s_", ""]
+    # P2: surface model-guarantee uncertainty loudly, not buried in per-provider notes
+    model_unconfirmed = [p for p in PROVIDERS
+                         if any("assert" in str(n) and "failed" in str(n)
+                                for n in (outputs.get(p, {}).get("notes") or []))]
+    if model_unconfirmed:
+        lines.append(
+            f"> ⚠ **模型保证未确认**:{model_unconfirmed} 的目标模型断言(如 Gemini=Pro)本轮"
+            f"读取失败、被容错跳过——**无法确定这几家是否用目标模型作答**。下结论按此打折。\n")
     lines.append("## OQ-1 — JSON 输出稳定性")
     n_ok = sum(1 for p in PROVIDERS if outputs.get(p, {}).get("parsed") is not None)
     lines.append(f"- 解析成功 **{n_ok}/{len(PROVIDERS)}**")

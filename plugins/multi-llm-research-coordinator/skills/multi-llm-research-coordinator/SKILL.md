@@ -36,10 +36,20 @@ the agent invokes them; the user just states what they want. When triggered:
    `python3 scripts/run_discussion.py --question "<user's question>"`
    (these are slow — 2–5 min/provider with thinking models; run in the background
    and report when done, don't block).
-4. **Report**: read the output `final.md` / `synthesis.md` under
-   `~/multi-llm-archives/<topic_id>/`, summarize it, and **always surface (a) the
-   ⚠未核查·v0 caveat and (b) the unresolved-tension / 分歧 section** — the
-   disagreement is the most valuable output, never flatten it into false consensus.
+4. **Verify the load-bearing facts YOURSELF — close the loop, do NOT just paste the banner.**
+   The pipeline is unverified by design (no fact_checker, v0), but **you have WebSearch /
+   WebFetch**. For research runs the drafter emits a `## 5. ⚠ 待核事实 (needs verification)`
+   section — conflicting or single-source facts (version numbers, release dates, capability
+   claims). Take those, plus any load-bearing fact the recommendation hinges on, and **verify
+   them against primary sources (official docs, GitHub releases) before delivering.** Resolve the
+   conflicts; do not hand "X says March, Y says May" to the user as their homework. The
+   coordinator IS the fact-checker until the v1 pipeline T4 exists.
+5. **Report**: deliver a result that states **what you verified and what's still uncertain.**
+   Keep the ⚠未核查·v0 caveat for the three AIs' *raw* synthesis, but your delivered summary
+   should be the **verified** version. Always surface the unresolved-tension / 分歧 section — the
+   disagreement is the most valuable output; never flatten genuine disagreement into false
+   consensus, and **down-weight single-source claims** (don't let one AI's solo suggestion
+   outrank what all three converged on).
 
 If Chrome isn't up yet, tell the user to start it (see Prerequisites) and log in —
 that's the one thing only they can do.
