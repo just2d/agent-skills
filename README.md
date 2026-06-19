@@ -18,15 +18,19 @@ In Claude Code, add this repo as a marketplace once, then install the plugins yo
 
 ```
 /plugin marketplace add just2d/agent-skills
-/plugin install codex-review@agent-skills
-/plugin install browser-cdp@agent-skills
-/plugin install multi-llm-research-coordinator@agent-skills
+/plugin install codex-review@just2d-skills
+/plugin install browser-cdp@just2d-skills
+/plugin install multi-llm-research-coordinator@just2d-skills
 ```
+
+> Note: the install/update suffix is the **marketplace name** — the `name` field in
+> [`.claude-plugin/marketplace.json`](./.claude-plugin/marketplace.json), which is **`just2d-skills`** —
+> not the repo name (`agent-skills`). The repo name is only used by `marketplace add` to clone.
 
 Update later with:
 
 ```
-/plugin marketplace update agent-skills
+/plugin marketplace update just2d-skills
 ```
 
 ## Install (manual)
