@@ -11,6 +11,7 @@ Each skill lives in its own plugin under [`plugins/`](./plugins), so you can ins
 | [`codex-review`](./plugins/codex-review) | Run the local **Codex CLI** as an independent code reviewer. Session-bound by default so one Codex conversation persists across review rounds; a `--standalone` mode handles one-off reviews. |
 | [`browser-cdp`](./plugins/browser-cdp) | Drive an already-running **Chrome/Chromium** browser over the **Chrome DevTools Protocol** (`localhost:9222`) — read tabs, extract text/HTML, screenshot, run JS, click/fill forms — **without stealing focus** or changing the active tab. Pure-stdlib Python CLI. |
 | [`multi-llm-research-coordinator`](./plugins/multi-llm-research-coordinator) | Fan **one question** to your logged-in **Gemini + GPT + Claude** tabs in parallel over local Chrome (paid subscriptions, **no API**), then synthesize. Agent-driven end to end. Two modes: **research/选型** (convergent) and **discussion/多视角** (divergent — role-decorrelated takes + consensus/dissent). Pure-stdlib Python. |
+| [`x-twitter-scraper`](./plugins/x-twitter-scraper) | Use Xquik's REST API and MCP endpoint for X data workflows: tweet search, user lookup, followers, media, trends, monitors, webhooks, and confirmation-gated account actions. |
 
 ## Install (recommended: plugin marketplace)
 
