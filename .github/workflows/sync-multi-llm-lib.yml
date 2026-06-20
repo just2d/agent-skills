@@ -48,8 +48,8 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${LIB_SYNC_TOKEN}" ]; then
-            echo "::error::LIB_SYNC_TOKEN secret is missing — add a PAT with read access to just2d/multi-llm-lib"
-            exit 1
+            echo "::warning::LIB_SYNC_TOKEN not set — auto-sync is not enabled yet, skipping (no failure). To enable: gh secret set LIB_SYNC_TOKEN --repo just2d/agent-skills (a PAT with read on just2d/multi-llm-lib)."
+            exit 0
           fi
           # inject the token so sync-lib.sh's https clone of the private lib works
           git config --global url."https://x-access-token:${LIB_SYNC_TOKEN}@github.com/".insteadOf "https://github.com/"
