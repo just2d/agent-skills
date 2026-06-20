@@ -323,9 +323,10 @@ class GptWebDriver:
         #   - text-stability: false-fires during the model's mid-answer pauses
         #   - the copy-button data-testid: present (even visible) THROUGHOUT,
         #     including mid-think — carries zero completion info
-        # Gated on a NEW turn (count>baseline) + non-thinking answer text; the
-        # toolbar COUNT must reach the assistant-turn count, so a prior turn's
-        # lingering toolbar in a non-fresh chat can't satisfy `done` early.
+        # Gated on a NEW turn (count>baseline) + non-thinking answer text + the
+        # answer toolbar present (>=1). Counting toolbars (not comparing to the
+        # assistant-turn count) is what makes it robust to GPT-5.x Thinking's
+        # extra reasoning turn. See _gpt_answer_ready below.
         def _gpt_answer_ready() -> bool:
             r = _extract_value(
                 session.runtime_evaluate(
@@ -335,16 +336,24 @@ class GptWebDriver:
                     "const m=l?[...l.querySelectorAll('.markdown')]"
                     ".filter(x=>!x.className.includes('result-thinking')):[];"
                     "const hasText=m.length>0 && (m[m.length-1].innerText||'').trim().length>0;"
-                    "const done=document.querySelectorAll('[class*=\\\"min-h-[46px]\\\"]').length>=a.length;"
-                    "return {count:a.length, hasText:hasText, done:done};})()",
+                    "const toolbars=document.querySelectorAll('[class*=\\\"min-h-[46px]\\\"]').length;"
+                    "return {count:a.length, hasText:hasText, toolbars:toolbars};})()",
                     timeout=5.0,
                 )
             )
+            # done = the answer's action toolbar has mounted (>=1). We count
+            # toolbars (the completed-answer `min-h-[46px]` bar) rather than
+            # comparing to the assistant-turn count: GPT-5.x Thinking emits the
+            # reasoning as a SEPARATE assistant-role turn, so one question yields
+            # 2 turns but only 1 toolbar — the old `toolbars >= turn_count` check
+            # never held ("stream finished but answer did not render"). All call
+            # sites submit into a FRESH chat (navigate_new_chat), so a pre-existing
+            # answer can't satisfy >=1 early; the count>base gate adds belt-and-braces.
             return (
                 isinstance(r, dict)
                 and int(r.get("count", 0)) > base
                 and bool(r.get("hasText"))
-                and bool(r.get("done"))
+                and int(r.get("toolbars", 0)) >= 1
             )
 
         try:
