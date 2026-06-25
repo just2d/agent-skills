@@ -4,7 +4,10 @@
 Coordinator = Claude Code (Case A). Core data flow of
 01-scenario-1-research.md, stopping there on purpose (handoff §五.B):
   T2  ONE researcher prompt → gemini + gpt + claude
-  T7  a single GPT drafter synthesizes (Case A: Claude is same-source, no draft)
+  T7  the coordinator (Claude Code) synthesizes final.md LOCALLY from the three
+      answers — fusion is the coordinator's job and buys no de-correlation from a
+      web LLM, so we drop the slow/brittle web round-trip. `--draft` restores
+      the legacy GPT-web draft (offline/unattended batch or A/B comparison).
 
 Render strategy (revised 2026-06-17):
   Driving N hidden tabs in parallel does NOT render reliably — Chrome throttles
@@ -213,6 +216,87 @@ def extract(provider, d, s, base, budget) -> str:
         return d.extract_last_assistant_message(s, baseline_count=base)
 
 
+def ask_fresh(provider, client, prompt, *, budget=None) -> str:
+    """Open a FRESH chat on `provider`, send `prompt`, return the answer text.
+
+    Reused by run_factcheck.py / run_critic.py — those are NEW roles
+    (fact_checker / critic), not the researcher thread, so each gets a clean
+    chat (no prior context to anchor on). Mirrors dispatch()'s per-provider
+    setup and reuses extract() for the wait + per-provider extraction. The
+    session is closed before return. Same focus-emulation rendering as the core
+    run (submit sets it; no tab is raised)."""
+    budget = budget or RESEARCH_BUDGET_S
+    d, s = _make_driver_and_session(provider, client)
+    try:
+        if provider == "gemini":
+            s._send_method("Page.navigate", {"url": "https://gemini.google.com/app"})
+            time.sleep(GEMINI_HYDRATION_S)
+            try:
+                d.assert_pro_model(s)
+            except Exception:  # noqa: BLE001 — best-effort, never fatal
+                pass
+        else:
+            if provider == "claude":
+                try:
+                    d.assert_target_model(s)
+                except Exception:  # noqa: BLE001
+                    pass
+            d.navigate_new_chat(s)
+        base = d.baseline_response_count(s)
+        d.inject_prompt(s, prompt)
+        d.submit(s)
+        return extract(provider, d, s, base, budget)
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
+# ---- binary banner gate (fact_checker/critic; user chose binary 2026-06-23) ----
+
+def assess_fact_results(facts: list) -> dict:
+    """Tally fact-checker verdicts. Pure. `facts` = list of {verdict,...} dicts.
+    `all_verified` is True only if EVERY load-bearing fact is 已证实 (and the
+    list is non-empty) — the strict gate for dropping the banner."""
+    by = {"已证实": 0, "存疑": 0, "已证伪": 0, "查无源": 0}
+    disputed = []
+    for f in facts or []:
+        v = (f or {}).get("verdict", "查无源")
+        by[v] = by.get(v, 0) + 1
+        if v != "已证实":
+            disputed.append(f)
+    total = len(facts or [])
+    return {"total": total, "by": by, "disputed": disputed,
+            "all_verified": total > 0 and by.get("已证实", 0) == total}
+
+
+def final_status_header(assessment: dict, critic_factual_flags: int, ts: str) -> str:
+    """Binary banner (user choice): a clean ✅已核实 header IFF every load-bearing
+    fact is 已证实 AND no unresolved factual critic flaw; otherwise the ⚠ banner
+    WITH the specific shortfall. The ✅ version still points at the sources list
+    (see 「事实接地」 section), so it stays auditable rather than a bare check."""
+    if assessment.get("all_verified") and not critic_factual_flags:
+        return (
+            f"> ✅ **已核实** — 下面结论依赖的 {assessment['total']} 条关键事实均经 "
+            "fact_checker 联网核查 + 协调者抽检确认(来源见「事实接地」段),critic 未发现未消解的事实矛盾。\n"
+            f"> _生成 {ts} · scenario-1 + factcheck/critic_\n\n---\n\n"
+        )
+    by = assessment.get("by", {})
+    bits = []
+    for k in ("存疑", "已证伪", "查无源"):
+        if by.get(k):
+            bits.append(f"{by[k]} {k}")
+    if critic_factual_flags:
+        bits.append(f"{critic_factual_flags} 条 critic 事实异议")
+    detail = "、".join(bits) or "部分事实未通过核查"
+    return (
+        f"> ⚠ **部分未核查** — fact_checker/critic 已跑,但仍有 **{detail}**(见「事实接地」段);"
+        "这些结论采用前请自行核实。\n"
+        f"> _生成 {ts} · scenario-1 + factcheck/critic_\n\n---\n\n"
+    )
+
+
 def build_drafter_prompt(outputs: dict) -> str:
     import json as _json
     blocks = []
@@ -226,30 +310,35 @@ def build_drafter_prompt(outputs: dict) -> str:
     joined = "\n\n".join(blocks)
     return (
         "你是汇总者(drafter)。下面是三个 AI 针对同一调研问题各自独立给出的方案。"
-        "**重要:你(GPT)自己也是其中一个来源——合成时绝不得偏袒你自己的方案;按跨来源一致性加权,多家印证 > 单家主张。**"
-        "请合成一份给用户一次看完的结论,**用干净的 Markdown(段落正常换行;列表项之间不要插空行、不要把加粗单独成行)**,"
-        "**强制下列五节**:\n"
-        "## 1. 三家共识结论（多家一致的优先,标明是被交叉印证的）\n"
-        "## 2. 高价值少数派意见（只1家提但有道理的）——**逐条标注是哪家提的;单一来源的主张必须显式下调可信度、注明『仅X家提』,不得因为是你自己提的就抬高排序**\n"
-        "## 3. 未消解分歧（各家明显不同取舍 / 互相矛盾的）——有冲突就直说,不要抹平\n"
-        "## 4. 给我的推荐（紧扣【原始问题】的约束与场景,不泛泛;排序须体现来源一致性,单源方案不得排在多源方案之前,除非给出强理由）\n"
-        "## 5. ⚠ 待核事实（needs verification）——把**结论所依赖、但各家给的值互相冲突、或仅单一来源**的承重事实/版本号/日期/能力声明逐条列出,注明冲突点。这些**交给协调者去核**,不得当成定论写进推荐\n"
-        "（某节没有内容就写『无』,不要省略。）\n\n"
+        "请合成一份给用户一次看完的结论，**用 Markdown，强制四段**：\n"
+        "## 1. 三家共识结论\n## 2. 高价值少数派意见（只1家提但有道理的）\n"
+        "## 3. 未消解分歧（三家明显不同取舍的）\n"
+        "## 4. 给我的推荐（紧扣【原始问题】里写明的约束与场景，不要泛泛而谈）\n"
+        "（某段没有内容就写“无”，不要省略段落。）\n\n"
         f"【原始问题】\n{QUESTION}\n\n{joined}"
+    )
+
+
+def build_drafter_input(outputs: dict, ts: str) -> str:
+    """Coordinator-local synthesis brief written to `drafter_input.md`: the banner
+    to prepend verbatim + the four-section task + the three assembled answers. The
+    coordinator (Claude Code) reads this and writes `final.md` itself — fusion needs
+    no de-correlated web LLM (08-epistemics §4)."""
+    return (
+        "<!-- COORDINATOR (Claude Code): synthesize the deliverable from THIS file. -->\n"
+        "<!-- (1) prepend the BANNER block below VERBATIM; (2) write the four sections\n"
+        "     per the SYNTHESIS TASK; (3) Write the whole thing to final.md in this\n"
+        "     folder. Then surface final.md + its 未消解分歧 section to the user AS-IS —\n"
+        "     final.md IS the deliverable; do NOT compress or re-summarize it. -->\n\n"
+        "## ⬇ BANNER — prepend to final.md VERBATIM\n"
+        "```md\n" + unverified_banner(ts) + "```\n\n"
+        "## ⬇ SYNTHESIS TASK\n" + build_drafter_prompt(outputs) + "\n"
     )
 
 
 def measure_oq(results, outputs, draft) -> str:
     lines = [f"# OQ findings — {TOPIC_ID}", "", f"_generated {_now_iso()}_",
              f"_render strategy: parallel dispatch + serial extract (focus-emulation only, no foregrounding); budget {RESEARCH_BUDGET_S}s_", ""]
-    # P2: surface model-guarantee uncertainty loudly, not buried in per-provider notes
-    model_unconfirmed = [p for p in PROVIDERS
-                         if any("assert" in str(n) and "failed" in str(n)
-                                for n in (outputs.get(p, {}).get("notes") or []))]
-    if model_unconfirmed:
-        lines.append(
-            f"> ⚠ **模型保证未确认**:{model_unconfirmed} 的目标模型断言(如 Gemini=Pro)本轮"
-            f"读取失败、被容错跳过——**无法确定这几家是否用目标模型作答**。下结论按此打折。\n")
     lines.append("## OQ-1 — JSON 输出稳定性")
     n_ok = sum(1 for p in PROVIDERS if outputs.get(p, {}).get("parsed") is not None)
     lines.append(f"- 解析成功 **{n_ok}/{len(PROVIDERS)}**")
@@ -279,14 +368,23 @@ def measure_oq(results, outputs, draft) -> str:
     co = outputs.get(SAME_SOURCE, {})
     lines.append(f"- claude 是 coordinator 同源（Case A）。其 researcher {'有产出' if co.get('ok') else '无产出'}。")
     lines.append("  - v0 无 critic，无法完整评估增量价值；已归档供后续对比。")
-    lines.append(f"\n## 草稿\n- drafter(gpt): {'✅' if draft.get('ok') else '❌ ' + str(draft.get('error'))}")
+    via = draft.get("via", "?")
+    if draft.get("ok"):
+        status = f"✅ ({via})" + ("，coordinator 待本地合成 final.md" if via == "coordinator-local" else "")
+    else:
+        status = "❌ " + str(draft.get("error"))
+    lines.append(f"\n## 草稿\n- drafter: {status}")
     return "\n".join(lines)
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Scenario-1 core-chain v0: fan one question to Gemini/GPT/Claude, GPT drafts a synthesis.")
+        description="Scenario-1 core-chain v0: fan one question to Gemini/GPT/Claude; the "
+                    "coordinator synthesizes final.md locally (--draft = also produce a GPT-web final.md).")
     ap.add_argument("--dry-run", action="store_true", help="find tabs, send nothing (quota-safe)")
+    ap.add_argument("--draft", action="store_true",
+                    help="also have GPT (web) synthesize final.md in-script — for offline/unattended "
+                         "batch or A/B; default is coordinator-local synthesis from drafter_input.md")
     ap.add_argument("--question", help="research question to fan out (default: frozen T-001)")
     ap.add_argument("--question-file", help="read the question from a file (overrides --question)")
     ap.add_argument("--topic-id", help="archive folder under ARCHIVE_ROOT (default: env TOPIC_ID; "
@@ -388,40 +486,63 @@ def main() -> int:
             pass
     reg.save()
 
-    # ---- T7: GPT drafter (sequential, reuse GPT tab fresh chat) ----
-    print("\n[T7] GPT drafter synthesizing...")
+    # ---- T7: synthesis ----
+    # v0 change (2026-06-22): the coordinator (Claude Code) synthesizes final.md
+    # ITSELF from the three researcher answers. Rationale (08-epistemics §4): fusion
+    # is the coordinator's job and buys no de-correlation from a web LLM — only the
+    # (not-yet-built) fact_checker/critic must be external. So we write the assembled
+    # material to drafter_input.md and stop; the coordinator drafts final.md next.
+    # `--draft` restores the legacy GPT-web round-trip (offline batch / A/B).
     draft = {"ok": False}
-    try:
-        gd = GptWebDriver(ChromeCDPClient(CDP)); gs = gd.find_gpt_tab()
-        gd.navigate_new_chat(gs)
-        base = gd.baseline_response_count(gs)
-        gd.inject_prompt(gs, build_drafter_prompt(outputs)); gd.submit(gs)
-        gd.wait_for_streaming_done(gs, baseline_response_count=base, timeout_seconds=360)
-        text = gd.extract_last_assistant_message(gs)
-        url = read_location_href(gs)
-        now = _now_iso()
-        reg._records["gpt.drafter"] = SessionRecord(
-            topic_id=TOPIC_ID, provider="gpt", role="drafter", page_id=gs.page_id, url=url,
-            status="active", coordinator_identity=COORD, created_at=now, last_used_at=now,
-            history=[{"at": now, "action": "drafter_run"}])
-        reg.save()
-        draft = {"ok": bool(text and text.strip()), "text": text}
-        if draft["ok"]:
-            archive.write_draft(ARCHIVE_ROOT, TOPIC_ID, version=1, text=text)
-            archive.write_final(ARCHIVE_ROOT, TOPIC_ID, unverified_banner(_now_iso()) + text)
-            print(f"  ✅ draft v1 archived ({len(text)} chars; final prefixed ⚠未核查·v0)")
-        else:
-            print("  ❌ drafter empty")
-    except Exception as e:
-        draft = {"ok": False, "error": f"{type(e).__name__}: {str(e)[:120]}"}
-        print(f"  ❌ drafter failed: {draft['error']}")
+    if args.draft:
+        print("\n[T7] GPT web drafter synthesizing (--draft; legacy/offline path)...")
+        try:
+            gd = GptWebDriver(ChromeCDPClient(CDP)); gs = gd.find_gpt_tab()
+            gd.navigate_new_chat(gs)
+            base = gd.baseline_response_count(gs)
+            gd.inject_prompt(gs, build_drafter_prompt(outputs)); gd.submit(gs)
+            gd.wait_for_streaming_done(gs, baseline_response_count=base, timeout_seconds=360)
+            text = gd.extract_last_assistant_message(gs)
+            url = read_location_href(gs)
+            now = _now_iso()
+            reg._records["gpt.drafter"] = SessionRecord(
+                topic_id=TOPIC_ID, provider="gpt", role="drafter", page_id=gs.page_id, url=url,
+                status="active", coordinator_identity=COORD, created_at=now, last_used_at=now,
+                history=[{"at": now, "action": "drafter_run"}])
+            reg.save()
+            draft = {"ok": bool(text and text.strip()), "text": text, "via": "gpt-web"}
+            if draft["ok"]:
+                archive.write_draft(ARCHIVE_ROOT, TOPIC_ID, version=1, text=text)
+                archive.write_final(ARCHIVE_ROOT, TOPIC_ID, unverified_banner(_now_iso()) + text)
+                print(f"  ✅ draft v1 archived ({len(text)} chars; final prefixed ⚠未核查·v0)")
+            else:
+                print("  ❌ drafter empty")
+        except Exception as e:
+            draft = {"ok": False, "error": f"{type(e).__name__}: {str(e)[:120]}", "via": "gpt-web"}
+            print(f"  ❌ drafter failed: {draft['error']}")
+    else:
+        print("\n[T7] writing drafter_input.md for coordinator-local synthesis...")
+        di_path = archive.topic_dir(ARCHIVE_ROOT, TOPIC_ID) / "drafter_input.md"
+        final_path = archive.topic_dir(ARCHIVE_ROOT, TOPIC_ID) / "final.md"
+        drafter_input = build_drafter_input(outputs, _now_iso())
+        di_path.write_text(drafter_input, encoding="utf-8")
+        draft = {"ok": True, "via": "coordinator-local", "input": str(di_path)}
+        print(f"  ✅ drafter_input.md written ({len(drafter_input)} chars).")
+        print(f"  → NEXT (coordinator): synthesize {final_path} from it (banner + four sections), "
+              f"then surface it to the user — no re-summary.")
 
     # ---- provenance + OQ findings ----
     archive.generate_revisit(ARCHIVE_ROOT, TOPIC_ID, reg, title=f"# {TOPIC_ID} — 回看入口")
+    web = bool(args.draft)
+    if web:
+        status = "completed_with_draft" if draft.get("ok") else "completed_no_draft"
+    else:
+        # local synthesis happens AFTER this script returns (coordinator writes final.md)
+        status = "researchers_done_pending_coordinator_synthesis"
     archive.update_manifest(ARCHIVE_ROOT, TOPIC_ID,
-                            round_counts={"researcher": 1, "fact_checker": 0, "drafter": 1, "critic": 0},
-                            ended_at=_now_iso(),
-                            final_status=("completed_with_draft" if draft.get("ok") else "completed_no_draft"))
+                            round_counts={"researcher": 1, "fact_checker": 0,
+                                          "drafter": 1 if web else 0, "critic": 0},
+                            ended_at=_now_iso(), final_status=status)
     findings = measure_oq(None, outputs, draft)
     (archive.topic_dir(ARCHIVE_ROOT, TOPIC_ID) / "oq_findings.md").write_text(findings, encoding="utf-8")
     print("\n" + "=" * 56 + "\n  OQ-1~5 FINDINGS\n" + "=" * 56 + "\n" + findings)

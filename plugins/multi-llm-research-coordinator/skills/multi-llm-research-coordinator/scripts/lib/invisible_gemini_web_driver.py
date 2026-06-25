@@ -41,22 +41,39 @@ GEMINI_URL_FRAGMENT = "gemini.google.com"
 # Probe doc §1: input is a Quill editor inside <rich-textarea>.
 INPUT_SELECTOR = 'rich-textarea div.ql-editor[contenteditable="true"]'
 
-# Send button. Re-verified live on Chrome 148 (2026-06-13): Gemini moved the
-# composer to Material components, so the old ``button.send-button`` no longer
-# matches — the ``send-button``/class moved to a wrapper and the live button
-# is a generic ``mdc-icon-button`` (mat-icon fonticon="arrow_upward") inside
-# ``.send-button-container``. The same button morphs to fonticon="stop" while
-# generating, so wait_for_streaming_done's PRIMARY completion signal is
-# preserved by reading the mat-icon fonticon (see has_stop_class below); the
-# innerText-stability path remains as a fallback. (The legacy ``stop`` CSS
-# class never appears on the new Material button.)
-SEND_BUTTON_SELECTOR = ".send-button-container button"
+# Send button. Gemini churns this composer DOM repeatedly — keep it resilient:
+#   - originally ``button.send-button``
+#   - 2026-06-13 (Chrome 148): a Material ``mdc-icon-button`` (mat-icon
+#     fonticon="arrow_upward") inside ``.send-button-container``
+#   - 2026-06-23 (re-verified live): wrapper renamed to ``.send-button`` (classes
+#     ``send-button has-input submit``); ``.send-button-container`` is gone.
+# The button only renders once the composer has text (an empty composer shows
+# the mic) and exposes its disabled state via the ``disabled`` property (NOT
+# aria-disabled). submit() tries these wrappers in order, then falls back to the
+# send/arrow icon's closest <button>, so the next rename degrades gracefully.
+# NOTE for wait_for_streaming_done: the same button morphs to fonticon="stop"
+# while generating; completion is network-event based (loadingFinished) with the
+# model-response innerText-stability path as fallback.
+SEND_BUTTON_SELECTOR = ".send-button button"
 
 # Probe doc §6: each model reply lives under a <model-response>; the
 # rendered Markdown sits at .markdown inside it. The legacy DingTalk
 # helper "Gemini 说" wrapping must be skipped — we go straight to .markdown.
 MODEL_RESPONSE_SELECTOR = "model-response"
 MARKDOWN_SELECTOR = ".markdown"
+
+# A/B comparison mode (observed live 2026-06-24): Gemini sometimes returns TWO
+# candidate answers in a <dual-model-response> / <response-selection-panel>
+# ("哪一个回答更实用?" 选项A/选项B) and BLOCKS the conversation until one is picked.
+# In this mode there is NO <model-response> — the answers live in
+# `.markdown.markdown-main-panel` inside the panel, and a `button.select-button`
+# ("此回答更实用") under each option resolves it. The driver reads option A and
+# clicks its select-button to collapse the panel to a normal response (which both
+# extracts the answer and unblocks any follow-up turn). Intermittent (an A/B
+# rollout/experiment), so completion + extraction must handle BOTH shapes.
+AB_PANEL_SELECTOR = "response-selection-panel, dual-model-response"
+AB_OPTION_MARKDOWN_SELECTOR = ".markdown.markdown-main-panel, .markdown"
+AB_SELECT_BUTTON_SELECTOR = "button.select-button"
 
 # Pro model probe (verified live on Brave 9222 during PR9.B Step 2):
 # document.querySelector('button.input-area-switch')?.innerText === "Pro"
@@ -610,15 +627,27 @@ class GeminiWebDriver:
     # ----- submit --------------------------------------------------------
 
     def submit(self, session: PageSession) -> None:
-        """Click the send button. Refuses to click if it's still disabled."""
+        """Click the send button. Refuses to click if it's missing or disabled.
+
+        Resilient to Gemini's recurring composer churn: try the known
+        send-button wrappers in order, then fall back to the send/arrow icon's
+        closest <button>. Treats BOTH the ``disabled`` property and
+        ``aria-disabled`` as "not clickable" (the Material button uses
+        ``disabled``)."""
         expr = (
             "(function(){"
-            f"  var btn=document.querySelector({_js_string_literal(SEND_BUTTON_SELECTOR)});"
+            "  var sels=['.send-button button','.send-button-container button','button.send-button'];"
+            "  var btn=null,i;"
+            "  for(i=0;i<sels.length;i++){btn=document.querySelector(sels[i]);if(btn)break;}"
+            "  if(!btn){"
+            "    var ic=document.querySelector('mat-icon[fonticon=\"send\"],mat-icon[fonticon=\"arrow_upward\"]');"
+            "    if(ic)btn=ic.closest('button');"
+            "  }"
             "  if(!btn) return {ok:false, reason:'send_btn_not_found'};"
-            "  if(btn.getAttribute('aria-disabled')==='true') "
-            "    return {ok:false, reason:'aria_disabled', cls:[...btn.classList]};"
+            "  if(btn.disabled || btn.getAttribute('aria-disabled')==='true')"
+            "    return {ok:false, reason:'disabled', cls:[...btn.classList]};"
             "  btn.click();"
-            "  return {ok:true};"
+            "  return {ok:true, matched: btn.getAttribute('aria-label')};"
             "})()"
         )
         try:
@@ -704,17 +733,30 @@ class GeminiWebDriver:
         _stab = {"prev": None, "n": 0}
 
         def _answer_settled() -> bool:
-            # Gate on a NEW model-response (count > baseline_count) so we never
-            # mistake the PREVIOUS answer — which is trivially "stable" — for the
-            # new one. Compare the actual text (not just its length) so a same-
-            # length edit can't read as stable.
+            # Completion = the newest answer's markdown TEXT non-empty and STABLE
+            # across polls. Two shapes: the normal <model-response> (gated on
+            # count > baseline_count so a previous reply isn't mistaken for the new
+            # one), OR the A/B comparison panel (no model-response yet — read option
+            # A). Comparing actual text (not length) so a same-length edit can't
+            # read as stable.
             r = _eval_value(
                 session,
-                "(function(){var rs=document.querySelectorAll('model-response');"
-                "var l=rs[rs.length-1];var m=l?l.querySelector('.markdown'):null;"
-                "return {count:rs.length, text:(m?(m.innerText||'').trim():'')};})()",
+                "(function(){"
+                "var rs=document.querySelectorAll('model-response');"
+                "if(rs.length>" + str(baseline_count) + "){"
+                "  var m=rs[rs.length-1].querySelector('.markdown');"
+                "  return {has:true, text:(m?(m.innerText||'').trim():'')};"
+                "}"
+                "var p=document.querySelector(" + _js_string_literal(AB_PANEL_SELECTOR) + ");"
+                "if(p){"
+                "  var es=p.querySelectorAll(" + _js_string_literal(AB_OPTION_MARKDOWN_SELECTOR) + ");"
+                "  var m=es.length?es[0]:null;"
+                "  return {has:true, ab:true, text:(m?(m.innerText||'').trim():'')};"
+                "}"
+                "return {has:false, text:''};"
+                "})()",
             )
-            if not isinstance(r, dict) or int(r.get("count", 0)) <= baseline_count:
+            if not isinstance(r, dict) or not r.get("has"):
                 _stab["prev"] = None
                 _stab["n"] = 0
                 return False
@@ -776,11 +818,25 @@ class GeminiWebDriver:
         expr = (
             "(function(){"
             f"  var resp=document.querySelectorAll({_js_string_literal(MODEL_RESPONSE_SELECTOR)});"
-            "  if(!resp.length) return {ok:false, reason:'no_model_response', count:0};"
-            "  var last=resp[resp.length-1];"
-            f"  var md=last.querySelector({_js_string_literal(MARKDOWN_SELECTOR)});"
-            "  if(!md) return {ok:false, reason:'no_markdown', count:resp.length};"
-            "  return {ok:true, count:resp.length, text: md.innerText || ''};"
+            "  if(resp.length){"
+            "    var last=resp[resp.length-1];"
+            f"    var md=last.querySelector({_js_string_literal(MARKDOWN_SELECTOR)});"
+            "    if(!md) return {ok:false, reason:'no_markdown', count:resp.length};"
+            "    return {ok:true, count:resp.length, text: md.innerText || ''};"
+            "  }"
+            # A/B comparison fallback: read option A, then click its select-button
+            # to pick it — collapses the panel to a normal response and unblocks the
+            # chat so a follow-up turn can proceed.
+            f"  var p=document.querySelector({_js_string_literal(AB_PANEL_SELECTOR)});"
+            "  if(p){"
+            f"    var es=p.querySelectorAll({_js_string_literal(AB_OPTION_MARKDOWN_SELECTOR)});"
+            "    var md=es.length?es[0]:null;"
+            "    var text=md?(md.innerText||''):'';"
+            f"    var btn=p.querySelector({_js_string_literal(AB_SELECT_BUTTON_SELECTOR)});"
+            "    if(btn) btn.click();"
+            "    return {ok:!!text.trim(), count:" + str(baseline_count + 1) + ", text:text, ab:true, resolved:!!btn};"
+            "  }"
+            "  return {ok:false, reason:'no_model_response', count:0};"
             "})()"
         )
         try:
