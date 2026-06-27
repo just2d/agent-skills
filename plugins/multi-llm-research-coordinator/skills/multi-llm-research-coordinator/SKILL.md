@@ -1,6 +1,6 @@
 ---
 name: multi-llm-research-coordinator
-description: Fan ONE question out to the user's logged-in Gemini + GPT + Claude tabs in parallel over local Chrome (their paid subscriptions, no API), then synthesize. The agent drives this end to end — the user never runs anything. Two modes: (1) RESEARCH/选型 (convergent — "how does the industry do X / which approach is best", structured JSON + a synthesized recommendation); (2) DISCUSSION/多视角 (divergent — open or subjective topics, "let three AIs discuss/debate X / compare perspectives on X", role-decorrelated takes + a consensus/dissent synthesis). Trigger whenever the user wants several AIs to answer, research, discuss, debate, or cross-check the same question at once.
+description: Fan ONE question out to the user's logged-in Gemini + GPT + Claude tabs in parallel over local Chrome (their paid subscriptions, no API), then synthesize. The agent drives this end to end — the user never runs anything. Two modes: (1) RESEARCH/选型 (convergent — "how does the industry do X / which approach is best", structured JSON + a synthesized recommendation); (2) DISCUSSION/多视角 (divergent — open or subjective topics, "let three AIs discuss/debate X / compare perspectives on X", role-decorrelated takes + a consensus/dissent synthesis). Trigger whenever the user wants several AIs to answer, research, discuss, debate, or cross-check the same question at once. Research runs a fast LIGHT scan by default (~5 min, breadth/blind-spots, unverified); say 深度/核实/verified for the DEEP fact-checked + critiqued version.
 ---
 
 # multi-llm-research-coordinator
@@ -10,14 +10,14 @@ tabs in parallel (over local Chrome via CDP — your paid subscriptions, **no
 API**), then the coordinator (this agent) synthesizes a single four-section
 answer **locally** — no extra web round-trip.
 
-> **Status: v0.5 — fact_checker + critic added; decision-tree still minimal.**
-> The chain now does load-bearing-fact checking (`run_factcheck.py`, Gemini live
-> web search + coordinator `WebFetch` spot-check) and adversarial review
-> (`run_critic.py`, GPT-logic + Gemini-industry). The `final.md` banner is now a
-> **binary gate**: it drops to **✅已核实(附来源)** only when *every* load-bearing
-> fact is `已证实` with a working source **and** no critic `contradicted_fact`
-> remains; otherwise it keeps **⚠未核查** with the specific shortfall. Not yet
-> built: the full T9 decision tree + 11 interrupts (phase 3). See [Known limits](#known-limits).
+> **Status — two speed modes (default = light).**
+> **light** (default, ~3–5 min): fan-out → one local synthesis → **⚠未核查** deliverable.
+> **deep** (opt-in, ~12–15 min): light + `run_factcheck.py` (Gemini web search +
+> coordinator `WebFetch` spot-check) + `run_critic.py` (GPT-logic + Gemini-industry) +
+> a **binary banner gate** (drops to **✅已核实(附来源)** only if *every* load-bearing
+> fact is `已证实` w/ a working source **and** no `contradicted_fact`; else **⚠未核查**
+> with the shortfall). **How to pick a mode → see 「两种速度模式」 below.** Not yet built:
+> T9 decision tree + 11 interrupts (phase 3). See [Known limits](#known-limits).
 
 This skill is for a **technically comfortable self-hoster**: you run your own
 Chrome, manage three logins yourself, and are OK fixing a selector when a
@@ -26,44 +26,63 @@ of three chat UIs is inherently brittle (see limits).
 
 ---
 
+## 两种速度模式:light(默认,快) vs deep(核实,慢)
+
+时间是瓶颈(token 免费,但每家深度联网思考要 2–5 min),所以分两档,**默认走 light**:
+
+| 模式 | 流程 | 时间 | 交付 |
+|---|---|---|---|
+| **light(默认)** | 扇出 3 家 → coordinator 一次合成(保留各家视角 + 标分歧)。**不核查、不对抗** | ~3–5 min | **⚠未核查** · 扩面/去盲区的快扫 |
+| **deep(opt-in)** | light + fact_checker(联网核实承重事实) + coordinator WebFetch 抽检 + critic(GPT/Gemini 对抗审) + 二元 gate | ~12–15 min | **✅已核实(附来源)** 或 ⚠带具体缺口 |
+
+**用户怎么触发(← 这就是回答"我如何触发轻模式"):**
+- **默认就是 light** —— 正常提问(「业界怎么做 X」「大家怎么看 Y」「扫一下 Z」「问问三家」)**什么都不用加**,就走 light。
+- **要 deep** —— 请求里带任一关键词:**「深度 / 核实 / 帮我核实 / 选型拍板 / 要落地的决策 / verified / 严格核查」**。
+- **强制 light**(怕 agent 自作主张升级)—— 说 **「轻模式 / 快速 / 快扫 / 别核查 / 只要各家观点」**。
+- light 产出末尾**必附升级提示**:「要核实版就说『深度核实』,我再跑 fact_checker+critic(约 +10 min)」—— 看完快扫版随时一句话升级,**同话题不必重问**(走 follow-up / 同 `--topic-id` 续,不重跑 researcher)。
+
+> `run_discussion.py`(发散/多视角)本身单轮、轻量,**不分** light/deep;速度档只作用于 research(`run_scenario1_core.py`)。
+
+---
+
 ## How the agent runs this (the user never types Python)
 
 The Python scripts below are this skill's **internal, deterministic tools** —
 the agent invokes them; the user just states what they want. When triggered:
 
-1. **Pick the mode** from the request:
-   - convergent research / 选型 / "which is best" / "how does industry do X" → `scripts/run_scenario1_core.py`
-   - open or subjective / "discuss" / "debate" / "compare perspectives" → `scripts/run_discussion.py`
+1. **Pick the mode** (two independent axes):
+   - **kind**: convergent research / 选型 / "which is best" → `scripts/run_scenario1_core.py`; open/subjective / "discuss" / "debate" → `scripts/run_discussion.py` (single-round, inherently light)
+   - **speed (research only)**: **light = default**; go **deep** only on a deep trigger (深度/核实/选型拍板/verified…) — see 「两种速度模式」 above. On a decision-looking question with no trigger, default light but offer the deep upgrade.
 2. **Preflight** (always): `python3 scripts/preflight.py`. If it fails, relay the
    plain-language fix (e.g. "Gemini 不在 Pro,手动切") and stop — do not send.
 3. **Run** the chosen script with the user's question, e.g.
    `python3 scripts/run_discussion.py --question "<user's question>"`
    (these are slow — 2–5 min/provider with thinking models; run in the background
    and report when done, don't block).
-4. **Synthesize → fact-check → critique → gate the banner (research mode)**:
-   The convergent pipeline, with you (the coordinator) as the glue between web
-   rounds. `run_discussion.py` is unaffected (it writes `synthesis.md` itself).
-   - **a. Draft.** `run_scenario1_core.py` stops after the three researchers and
-     writes `drafter_input.md`. **You write a draft of `final.md` yourself** (read
-     `drafter_input.md`, four sections: 共识 / 高价值少数派 / 未消解分歧 / 给我的推荐).
-     Local — don't send the answers back to a web LLM. (`--draft` = legacy GPT-web.)
-   - **b. Fact-check.** `python3 scripts/run_factcheck.py --topic-id <id>` — Gemini
-     (primary, **forced live web search**) verifies the load-bearing facts (auto-
-     unioned from the researchers, or `--facts-file`); GPT re-checks the disputed.
-     Then **you spot-check the most load-bearing sources with your own `WebFetch`**
-     — the most de-correlated external check there is (`08-epistemics.md` §4).
-   - **c. Critique.** `python3 scripts/run_critic.py --topic-id <id>` — GPT (logic)
-     + Gemini (industry), independent, review your draft against the fact results.
-     Fold high-severity / `contradicted_fact` flaws into a revised draft.
-   - **d. Banner gate (binary).** Drop the banner to **✅已核实(附来源)** ONLY if
-     *every* load-bearing fact is `已证实` with a working source, your spot-check
-     passed, **and** there's no unresolved `contradicted_fact`. Otherwise keep
-     **⚠未核查** naming the specific shortfall (存疑/已证伪/查无源/事实异议). Use
-     `assess_fact_results` + `final_status_header` in `run_scenario1_core.py` for
-     the exact rule. *Synthesizing is not verifying* — a clean gate requires the
-     external checks above, never just three models agreeing (§3 一致≠真).
-   - **e. Report.** Surface `final.md` **as-is** (don't re-summarize) + **always**
-     the 未消解分歧 section — disagreement is the most valuable output.
+4. **Synthesize, then (deep only) verify — research mode.** You (the coordinator)
+   are the glue. `run_discussion.py` is unaffected (it writes `synthesis.md` itself).
+   - **a. Draft (BOTH modes).** `run_scenario1_core.py` stops after the three
+     researchers and writes `drafter_input.md`. **You write `final.md` yourself**:
+     four sections — 三家共识 / 各家高价值独特点(标是哪家) / 未消解分歧 / 给我的推荐.
+     Local; keep the **⚠未核查** banner. **Do NOT flatten into one averaged
+     consensus** — preserving each AI's view + the 分歧 is the whole point (§原则1).
+   - **★ LIGHT MODE STOPS HERE** → jump to **e**. Do NOT run factcheck/critic. End
+     the deliverable with the upgrade line: 「要核实版就说『深度核实』,我再跑
+     fact_checker+critic(约 +10 min)」.
+   - **b. Fact-check (DEEP only).** `python3 scripts/run_factcheck.py --topic-id <id>`
+     — Gemini (forced live web search) verifies the load-bearing facts (auto-unioned,
+     or `--facts-file`); GPT re-checks disputed. Then **you `WebFetch`-spot-check the
+     most load-bearing sources** — the most de-correlated external check (`08-epistemics.md` §4).
+   - **c. Critique (DEEP only).** `python3 scripts/run_critic.py --topic-id <id>` —
+     GPT (logic) + Gemini (industry), independent, review your draft vs the fact
+     results. Fold high-severity / `contradicted_fact` flaws into a revised draft.
+   - **d. Banner gate (DEEP only, binary).** Drop to **✅已核实(附来源)** ONLY if
+     *every* load-bearing fact is `已证实` w/ a working source, your spot-check
+     passed, **and** no unresolved `contradicted_fact`. Else keep **⚠未核查** naming
+     the shortfall. Logic: `assess_fact_results` + `final_status_header`. *Synthesizing
+     is not verifying* — never drop the banner on three models merely agreeing (§3 一致≠真).
+   - **e. Report (BOTH modes).** Surface `final.md` **as-is** (don't re-summarize) +
+     **always** the 未消解分歧 section — disagreement is the most valuable output.
 
 5. **Follow-up / 多轮追问** (same topic, with context): when the user wants to
    push back, narrow, or ask a *next* question on a topic already run, use

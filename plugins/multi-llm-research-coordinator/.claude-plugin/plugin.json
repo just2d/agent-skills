@@ -2,7 +2,7 @@
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "multi-llm-research-coordinator",
   "description": "Fan ONE question out to the user's logged-in Gemini + GPT + Claude tabs in parallel over local Chrome (their paid subscriptions, no API), then synthesize. The agent drives it end to end — the user never runs anything. Two modes: RESEARCH/选型 (convergent — which approach is best, structured) and DISCUSSION/多视角 (divergent — open or subjective topics, role-decorrelated takes + a consensus/dissent synthesis). Pure-stdlib Python, no dependencies; vendors multi-llm-lib (pinned).",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": {
     "name": "just2d"
   },
