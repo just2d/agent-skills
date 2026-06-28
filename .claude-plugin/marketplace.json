@@ -26,6 +26,13 @@
       "category": "automation",
       "source": "./plugins/multi-llm-research-coordinator",
       "homepage": "https://github.com/just2d/agent-skills/tree/main/plugins/multi-llm-research-coordinator"
+    },
+    {
+      "name": "x-twitter-scraper",
+      "description": "Use Xquik for X data workflows: tweet search, user lookup, followers, media, trends, monitors, webhooks, MCP setup, and confirmation-gated account actions.",
+      "category": "automation",
+      "source": "./plugins/x-twitter-scraper",
+      "homepage": "https://github.com/just2d/agent-skills/tree/main/plugins/x-twitter-scraper"
     }
   ]
 }

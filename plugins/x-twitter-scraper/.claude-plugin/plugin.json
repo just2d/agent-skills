@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "x-twitter-scraper",
+  "description": "Use Xquik for X data workflows: tweet search, user lookup, followers, media, trends, monitors, webhooks, MCP setup, and confirmation-gated account actions.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Xquik"
+  },
+  "homepage": "https://github.com/just2d/agent-skills/tree/main/plugins/x-twitter-scraper",
+  "keywords": [
+    "x",
+    "twitter",
+    "social-media",
+    "api",
+    "mcp"
+  ]
+}
